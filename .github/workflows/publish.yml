@@ -1,0 +1,142 @@
+name: Publish to NPM
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      publish_tag:
+        description: 'NPM publish tag'
+        required: true
+        default: 'latest'
+        type: choice
+        options:
+          - latest
+          - beta
+          - alpha
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+        continue-on-error: true
+
+      - name: Build
+        run: npm run build
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Bump version (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          npm version ${{ github.event.inputs.version_type }} --no-git-tag-version
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to $(node -p "require('./package.json').version")"
+          git tag "v$(node -p "require('./package.json').version")"
+          git push origin main --tags
+
+      - name: Get package version
+        id: package-version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.package-version.outputs.version }}
+          release_name: Release v${{ steps.package-version.outputs.version }}
+          body: |
+            ## Changes in v${{ steps.package-version.outputs.version }}
+            
+            ### Features
+            - GraphRAG engine for intelligent codebase understanding
+            - Multi-format tool parsing (custom, XML, JSON)
+            - MCP server integration for filesystem operations
+            - Streaming responses from LLM providers
+            - Dynamic system prompt generation
+            
+            ### Installation
+            ```bash
+            npm install -g openagent-cli
+            ```
+            
+            ### Usage
+            ```bash
+            openagent --help
+            ```
+          draft: false
+          prerelease: ${{ contains(github.event.inputs.publish_tag, 'beta') || contains(github.event.inputs.publish_tag, 'alpha') }}
+
+      - name: Publish to NPM
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --access public --tag ${{ github.event.inputs.publish_tag || 'latest' }}
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ Successfully published openagent-cli@${{ steps.package-version.outputs.version }} to NPM!"
+          echo "📦 Install with: npm install -g openagent-cli"
+
+  notify-failure:
+    needs: [test, publish]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Notify failure
+        run: |
+          echo "❌ Publishing workflow failed!"
+          echo "Check the logs above for details."

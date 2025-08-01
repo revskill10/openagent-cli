@@ -1,0 +1,10 @@
+.claude
+.tmp
+dist
+*.md
+!README.md
+*.txt
+!LICENSE.txt
+*.json
+reports
+node_modules

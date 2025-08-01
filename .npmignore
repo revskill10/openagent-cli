@@ -1,0 +1,39 @@
+# Source files
+src/
+tsconfig.json
+
+# Development files
+.github/
+node_modules/
+*.log
+.env*
+
+# Build artifacts (keep dist/)
+# dist/ is included via "files" in package.json
+
+# Documentation for development
+FRAMEWORK.md
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+test/
+*.test.*
+*.spec.*
+
+# Miscellaneous
+tmp/
+temp/
