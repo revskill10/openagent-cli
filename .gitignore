@@ -8,3 +8,4 @@ dist
 *.json
 reports
 node_modules
+!package.json

@@ -1,0 +1,100 @@
+{
+  "name": "openagent-cli",
+  "version": "0.1.0",
+  "description": "Intelligent agentic coder with GraphRAG engine, MCP integration, and multi-LLM support",
+  "main": "dist/api.js",
+  "module": "dist/api.js",
+  "types": "dist/api.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/api.js",
+      "require": "./dist/api.js",
+      "types": "./dist/api.d.ts"
+    }
+  },
+  "scripts": {
+    "start": "tsx src/ui.tsx",
+    "start:ui": "tsx src/ui.tsx",
+    "start:distributed": "tsx src/distributed_main.ts start",
+    "test:distributed": "tsx src/distributed_main.ts test",
+    "example:distributed": "tsx src/distributed_main.ts example",
+    "rag-ui": "tsx src/rag-ui.tsx",
+    "test:rag": "tsx src/test-rag-mock.ts",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "tsc": "tsc --noEmit",
+    "test": "tsx src/distributed_main.ts test",
+    "test:streaming": "tsx src/test-streaming-blocks.ts",
+    "test:prompts": "tsx src/test-interactive-prompts.ts",
+    "test:durable": "tsx src/test-durable-execution.ts",
+    "test:concurrent": "tsx src/test-concurrent-streaming.ts",
+    "test:fixed-streaming": "tsx src/test-fixed-streaming.ts",
+    "lint": "echo \"No linting configured yet\"",
+    "clean": "rm -rf dist",
+    "dev": "tsx watch src/ui.tsx",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "bin": {
+    "openagent": "./dist/cli.js",
+    "openagent-ui": "./dist/ui.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE",
+    "PLAN.md"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "graphrag",
+    "mcp",
+    "llm",
+    "openai",
+    "anthropic",
+    "codebase",
+    "cli",
+    "tool",
+    "assistant",
+    "streaming",
+    "filesystem"
+  ],
+  "author": "OpenAgent Contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/yourusername/openagent#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/openagent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/openagent/issues"
+  },
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.57.0",
+    "@bluelibs/runner": "^3.0.0",
+    "@langchain/community": "^0.3.20",
+    "@langchain/core": "^0.3.30",
+    "@langchain/openai": "^0.3.17",
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "@modelcontextprotocol/server-filesystem": "^2025.7.29",
+    "cheerio": "^1.0.0",
+    "commander": "^12.1.0",
+    "express": "^5.1.0",
+    "ink": "^6.1.0",
+    "ink-select-input": "^6.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "langchain": "^0.3.15",
+    "openai": "^5.11.0",
+    "react": "^19.1.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.1.0",
+    "@types/react": "^19.1.9",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}
