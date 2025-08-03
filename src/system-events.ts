@@ -3,7 +3,7 @@ import { EventEmitter } from 'events';
 export interface SystemEvent {
   id: string;
   timestamp: number;
-  type: 'task_start' | 'task_complete' | 'task_error' | 'agent_delegation' | 'agent_communication' | 'tool_start' | 'tool_complete' | 'tool_error' | 'system_info';
+  type: 'task_start' | 'task_complete' | 'task_error' | 'task_assigned' | 'agent_delegation' | 'agent_communication' | 'agent_spawned' | 'agent_removed' | 'tool_start' | 'tool_complete' | 'tool_error' | 'system_info';
   agentId?: string;
   taskId?: string;
   data: any;
@@ -217,6 +217,46 @@ export class SystemEventEmitter extends EventEmitter {
       timestamp: Date.now(),
       type: 'system_info',
       data: { message, ...data }
+    };
+
+    this.addEvent(event);
+    this.emit('systemEvent', event);
+  }
+
+  emitTaskAssigned(taskId: string, agentId: string, taskName: string) {
+    const event: SystemEvent = {
+      id: `evt_${this.eventId++}`,
+      timestamp: Date.now(),
+      type: 'task_assigned',
+      agentId,
+      taskId,
+      data: { taskName }
+    };
+
+    this.addEvent(event);
+    this.emit('systemEvent', event);
+  }
+
+  emitAgentSpawned(agentId: string, agentName: string, specialization: string[]) {
+    const event: SystemEvent = {
+      id: `evt_${this.eventId++}`,
+      timestamp: Date.now(),
+      type: 'agent_spawned',
+      agentId,
+      data: { name: agentName, specialization }
+    };
+
+    this.addEvent(event);
+    this.emit('systemEvent', event);
+  }
+
+  emitAgentRemoved(agentId: string, agentName: string) {
+    const event: SystemEvent = {
+      id: `evt_${this.eventId++}`,
+      timestamp: Date.now(),
+      type: 'agent_removed',
+      agentId,
+      data: { name: agentName }
     };
 
     this.addEvent(event);

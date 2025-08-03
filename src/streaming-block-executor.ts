@@ -14,7 +14,7 @@ export interface StreamingExecutionOptions {
 
 export interface StreamingExecutionResult {
   id: string;
-  type: 'block' | 'tool' | 'assignment' | 'prompt' | 'error';
+  type: 'block' | 'tool' | 'assignment' | 'prompt' | 'error' | 'status' | 'tool_start' | 'tool_complete' | 'execution_queued' | 'tool_approval_needed';
   result?: any;
   partial?: any;
   error?: string;
@@ -23,6 +23,12 @@ export interface StreamingExecutionResult {
   promptNeeded?: PromptDefinition;
   userResponse?: any;
   waitingForInput?: boolean;
+  toolName?: string;
+  toolCall?: any;
+  validationError?: {
+    error: string;
+    correctionPrompt: string;
+  };
 }
 
 /**

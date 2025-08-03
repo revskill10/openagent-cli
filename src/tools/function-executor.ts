@@ -83,7 +83,7 @@ export class FunctionExecutor extends BaseToolExecutor {
   async getTools(): Promise<ToolDefinition[]> {
     const tools: ToolDefinition[] = [];
     
-    for (const tool of this.functions.values()) {
+    for (const tool of Array.from(this.functions.values())) {
       tools.push({
         name: tool.name,
         description: tool.description,

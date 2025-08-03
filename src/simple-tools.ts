@@ -29,6 +29,15 @@ export interface PromptDefinition {
   };
 }
 
+export interface ToolApprovalPrompt {
+  id: string;
+  type: 'tool_approval';
+  toolName: string;
+  toolParams: any;
+  message: string;
+  options: Array<{ label: string; value: 'approve' | 'reject' | 'modify' }>;
+}
+
 export interface Step {
   id: string;
   tool: string;

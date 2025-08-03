@@ -2,7 +2,7 @@
 import { unifiedToolExecutor } from './tools/unified-tool-executor.js';
 import { validatingToolExecutor, ValidationError } from './tools/validating-tool-executor.js';
 import { systemEventEmitter } from './system-events.js';
-import { PromptDefinition } from './simple-tools.js';
+import { PromptDefinition, ToolApprovalPrompt } from './simple-tools.js';
 import { UserInputHandler } from './interactive-block-executor.js';
 
 export type BlockResult = {
@@ -14,6 +14,7 @@ export type BlockResult = {
   done: boolean;
   promptNeeded?: PromptDefinition;
   validationError?: ValidationError;
+  toolApprovalNeeded?: ToolApprovalPrompt;
 };
 
 /* ------------------------------------------------------------------ */
@@ -157,11 +158,63 @@ async function* executeStep(step: Step, ctx: Record<string, any>, inputHandler?:
       const toolCall = { name: step.tool, arguments: params };
       let timeoutHandle: NodeJS.Timeout | null = null;
       let completed = false;
-      
+
+      // Check if user approval is needed for tool execution
+      if (inputHandler?.handleToolApproval) {
+        const approvalPrompt: ToolApprovalPrompt = {
+          id: `approval_${step.id}_${Date.now()}`,
+          type: 'tool_approval',
+          toolName: step.tool,
+          toolParams: params,
+          message: `Do you want to execute the tool "${step.tool}" with the following parameters?\n${JSON.stringify(params, null, 2)}`,
+          options: [
+            { label: 'Approve', value: 'approve' },
+            { label: 'Reject', value: 'reject' },
+            { label: 'Modify', value: 'modify' }
+          ]
+        };
+
+        // Yield approval prompt and wait for user response
+        yield {
+          id: step.id,
+          toolApprovalNeeded: approvalPrompt,
+          done: false
+        };
+
+        try {
+          const approvalResponse = await inputHandler.handleToolApproval(approvalPrompt);
+
+          if (approvalResponse === 'reject') {
+            yield {
+              id: step.id,
+              tool: step.tool,
+              result: 'Tool execution rejected by user',
+              done: true
+            };
+            return;
+          }
+
+          if (approvalResponse === 'modify') {
+            // For now, just proceed - modification would need additional UI
+            console.log('Tool modification requested but not implemented yet');
+          }
+
+          // Continue with execution if approved
+        } catch (error) {
+          yield {
+            id: step.id,
+            tool: step.tool,
+            error: `Tool approval failed: ${error}`,
+            done: true
+          };
+          return;
+        }
+      }
+
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => reject(new Error('timeout')), timeoutMs);
       });
-      
+
       try {
         // Use validating executor if input handler is available, otherwise fallback to basic executor
         const executor = inputHandler ? validatingToolExecutor : unifiedToolExecutor;

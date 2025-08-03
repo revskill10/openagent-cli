@@ -11,10 +11,19 @@ export interface ExecutionState {
   variables: Record<string, any>;
   completedSteps: string[];
   currentStep?: string;
-  status: 'running' | 'paused' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'paused' | 'completed' | 'failed';
   startTime: number;
   lastUpdate: number;
   errors: string[];
+  backgroundJob?: boolean;
+}
+
+export interface BackgroundExecutionJob {
+  id: string;
+  state: ExecutionState;
+  promise: Promise<void>;
+  controller: AbortController;
+  streamCallback?: (result: StreamingExecutionResult & { executionState?: ExecutionState }) => void;
 }
 
 export interface DurableExecutionOptions extends StreamingExecutionOptions {
@@ -22,6 +31,7 @@ export interface DurableExecutionOptions extends StreamingExecutionOptions {
   persistenceDir?: string;
   autoCleanup?: boolean;
   resumeOnRestart?: boolean;
+  requireToolApproval?: boolean;
 }
 
 /**
@@ -49,22 +59,25 @@ REQUEST: ${userQuery}`;
 export class DurableBlockExecutor {
   private persistenceDir: string;
   private activeExecutions = new Map<string, ExecutionState>();
+  private backgroundJobs = new Map<string, BackgroundExecutionJob>();
+  private maxConcurrentJobs = 5;
 
   constructor(persistenceDir: string = '.tmp/executions') {
     this.persistenceDir = persistenceDir;
     this.ensurePersistenceDir();
     this.loadActiveExecutions();
+    this.startBackgroundProcessor();
   }
 
   /**
-   * Execute blocks with durable persistence
+   * Execute blocks with durable persistence (non-blocking)
    */
   async *executeDurable(
     script: string,
     options: DurableExecutionOptions = {}
   ): AsyncGenerator<StreamingExecutionResult & { executionState?: ExecutionState }, void, unknown> {
     const executionId = options.executionId || `exec_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    
+
     // Check if this is a resumed execution
     let state = this.loadExecutionState(executionId);
     if (!state) {
@@ -75,14 +88,15 @@ export class DurableBlockExecutor {
         options,
         variables: { ...(options.variables || {}) },
         completedSteps: [],
-        status: 'running',
+        status: 'queued',
         startTime: Date.now(),
         lastUpdate: Date.now(),
-        errors: []
+        errors: [],
+        backgroundJob: true
       };
     } else {
       // Resume existing execution
-      state.status = 'running';
+      state.status = 'queued';
       state.lastUpdate = Date.now();
       console.log(`🔄 Resuming execution ${executionId} with ${state.completedSteps.length} completed steps`);
     }
@@ -90,23 +104,92 @@ export class DurableBlockExecutor {
     this.activeExecutions.set(executionId, state);
     this.saveExecutionState(state);
 
+    // Start background execution
+    yield* this.executeInBackground(state, options);
+
+  }
+
+  /**
+   * Execute in background with streaming to UI only when needed
+   */
+  private async *executeInBackground(
+    state: ExecutionState,
+    options: DurableExecutionOptions
+  ): AsyncGenerator<StreamingExecutionResult & { executionState?: ExecutionState }, void, unknown> {
+    const controller = new AbortController();
+
+    // Immediate status update
+    yield {
+      id: state.id,
+      type: 'status',
+      result: 'Execution queued for background processing',
+      done: false,
+      executionState: { ...state }
+    };
+
     try {
-      systemEventEmitter.emitTaskStart(executionId, 'durable-executor', `Durable execution: ${script.substring(0, 50)}...`);
+      // Create background job
+      const job: BackgroundExecutionJob = {
+        id: state.id,
+        state,
+        controller,
+        promise: this.runBackgroundExecution(state, options, controller.signal),
+        streamCallback: undefined
+      };
+
+      this.backgroundJobs.set(state.id, job);
+
+      // Stream status updates
+      yield* this.streamBackgroundJobStatus(job);
+
+    } catch (error) {
+      state.status = 'failed';
+      state.errors.push(String(error));
+      this.saveExecutionState(state);
+
+      yield {
+        id: state.id,
+        type: 'error',
+        error: String(error),
+        done: true,
+        executionState: { ...state }
+      };
+    }
+  }
+
+  /**
+   * Run execution in background without blocking
+   */
+  private async runBackgroundExecution(
+    state: ExecutionState,
+    options: DurableExecutionOptions,
+    signal: AbortSignal
+  ): Promise<void> {
+    try {
+      state.status = 'running';
+      state.lastUpdate = Date.now();
+      this.saveExecutionState(state);
+
+      systemEventEmitter.emitTaskStart(state.id, 'durable-executor', `Background execution: ${state.script.substring(0, 50)}...`);
 
       // Execute with streaming and state tracking
-      for await (const result of streamingBlockExecutor.executePromptStreaming(script, {
+      for await (const result of streamingBlockExecutor.executePromptStreaming(state.script, {
         ...options,
         variables: state.variables
       })) {
+        if (signal.aborted) {
+          throw new Error('Execution aborted');
+        }
+
         // Update execution state
         state.lastUpdate = Date.now();
-        
+
         if (result.done && result.id) {
           if (result.error) {
             state.errors.push(`${result.id}: ${result.error}`);
           } else {
             state.completedSteps.push(result.id);
-            
+
             // Store result as variable if it has a meaningful result
             if (result.result !== undefined && result.id) {
               state.variables[result.id] = result.result;
@@ -122,11 +205,31 @@ export class DurableBlockExecutor {
         // Save state after each step
         this.saveExecutionState(state);
 
-        // Yield result with execution state
-        yield {
-          ...result,
-          executionState: { ...state }
-        };
+        // Check if tool approval is needed
+        if (result.type === 'tool' && !result.done && options.requireToolApproval) {
+          const job = this.backgroundJobs.get(state.id);
+          if (job?.streamCallback) {
+            job.streamCallback({
+              id: result.id,
+              type: 'tool_approval_needed',
+              toolName: result.tool || 'unknown',
+              toolResult: result.result,
+              done: false,
+              executionState: { ...state }
+            });
+          }
+          // Pause execution until approval is received
+          // This would need to be implemented with a proper approval mechanism
+        }
+
+        // Notify UI of important updates only
+        const job = this.backgroundJobs.get(state.id);
+        if (job?.streamCallback && (result.done || result.error || result.type === 'tool_start' || result.type === 'tool_complete')) {
+          job.streamCallback({
+            ...result,
+            executionState: { ...state }
+          });
+        }
       }
 
       // Mark execution as completed
@@ -134,7 +237,7 @@ export class DurableBlockExecutor {
       state.lastUpdate = Date.now();
       this.saveExecutionState(state);
 
-      systemEventEmitter.emitTaskComplete(executionId, { 
+      systemEventEmitter.emitTaskComplete(state.id, {
         completedSteps: state.completedSteps.length,
         variables: Object.keys(state.variables).length,
         duration: Date.now() - state.startTime
@@ -142,7 +245,7 @@ export class DurableBlockExecutor {
 
       // Cleanup if auto-cleanup is enabled
       if (options.autoCleanup !== false) {
-        await this.cleanupExecution(executionId);
+        await this.cleanupExecution(state.id);
       }
 
     } catch (error) {
@@ -150,17 +253,118 @@ export class DurableBlockExecutor {
       state.errors.push(error instanceof Error ? error.message : String(error));
       state.lastUpdate = Date.now();
       this.saveExecutionState(state);
-      
-      systemEventEmitter.emitTaskError(executionId, state.errors.join('; '));
-      
-      yield {
-        id: executionId,
-        type: 'error',
-        error: `Durable execution failed: ${error instanceof Error ? error.message : String(error)}`,
-        done: true,
-        executionState: { ...state }
-      };
+
+      systemEventEmitter.emitTaskError(state.id, state.errors.join('; '));
+      throw error;
+    } finally {
+      this.backgroundJobs.delete(state.id);
     }
+  }
+
+  /**
+   * Stream background job status updates
+   */
+  private async *streamBackgroundJobStatus(
+    job: BackgroundExecutionJob
+  ): AsyncGenerator<StreamingExecutionResult & { executionState?: ExecutionState }, void, unknown> {
+    const results: (StreamingExecutionResult & { executionState?: ExecutionState })[] = [];
+
+    // Set up callback to collect results
+    job.streamCallback = (result) => {
+      results.push(result);
+    };
+
+    // Poll for status updates
+    const pollInterval = 100; // 100ms
+    const maxWait = 30000; // 30 seconds max wait
+    let elapsed = 0;
+
+    while (elapsed < maxWait) {
+      // Yield any collected results
+      while (results.length > 0) {
+        const result = results.shift()!;
+        yield result;
+
+        if (result.done && result.executionState?.status === 'completed') {
+          return;
+        }
+      }
+
+      // Check if job is still running
+      const currentJob = this.backgroundJobs.get(job.id);
+      if (!currentJob) {
+        // Job completed or failed
+        yield {
+          id: job.id,
+          type: 'status',
+          result: 'Background execution completed',
+          done: true,
+          executionState: { ...job.state }
+        };
+        return;
+      }
+
+      // Wait before next poll
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      elapsed += pollInterval;
+    }
+
+    // Timeout - but job continues in background
+    yield {
+      id: job.id,
+      type: 'status',
+      result: 'Background execution continues (UI timeout)',
+      done: false,
+      executionState: { ...job.state }
+    };
+  }
+
+  /**
+   * Start background processor for managing concurrent jobs
+   */
+  private startBackgroundProcessor(): void {
+    setInterval(() => {
+      this.cleanupCompletedJobs();
+    }, 5000); // Cleanup every 5 seconds
+  }
+
+  /**
+   * Clean up completed background jobs
+   */
+  private cleanupCompletedJobs(): void {
+    for (const [jobId, job] of this.backgroundJobs.entries()) {
+      if (job.state.status === 'completed' || job.state.status === 'failed') {
+        this.backgroundJobs.delete(jobId);
+        console.log(`🧹 Cleaned up background job ${jobId}`);
+      }
+    }
+  }
+
+  /**
+   * Get status of all background jobs
+   */
+  getBackgroundJobsStatus(): { id: string; status: string; progress: number }[] {
+    return Array.from(this.backgroundJobs.values()).map(job => ({
+      id: job.id,
+      status: job.state.status,
+      progress: job.state.completedSteps.length / Math.max(1, job.state.completedSteps.length + 1)
+    }));
+  }
+
+  /**
+   * Cancel a background job
+   */
+  cancelBackgroundJob(executionId: string): boolean {
+    const job = this.backgroundJobs.get(executionId);
+    if (job) {
+      job.controller.abort();
+      job.state.status = 'failed';
+      job.state.errors.push('Execution cancelled by user');
+      this.saveExecutionState(job.state);
+      this.backgroundJobs.delete(executionId);
+      return true;
+    }
+    return false;
   }
 
   /**

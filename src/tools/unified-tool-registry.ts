@@ -2,6 +2,9 @@ import { BaseToolExecutor, ToolDefinition, ToolExecutionResult, ToolCall, Simple
 import { LocalMCPExecutor } from './local-mcp-executor.js';
 import { RemoteMCPExecutor } from './remote-mcp-executor.js';
 import { FunctionExecutor, ToolFunction } from './function-executor.js';
+import { intelligentFileTools } from './intelligent-file-tool.js';
+import { shellExecutionTools } from './shell-execution-tools.js';
+import { dockerTools } from './docker-tools.js';
 
 export interface ToolRegistryConfig {
   localMCP?: Array<{
@@ -53,9 +56,16 @@ export class UnifiedToolRegistry {
       initPromises.push(remoteMCPExecutor.initialize());
     }
 
-    // Initialize Function Executor
-    if (config.functions && config.functions.length > 0) {
-      const functionExecutor = new FunctionExecutor(config.functions);
+    // Initialize Function Executor with intelligent file tools, shell execution tools, and Docker tools
+    const allFunctions = [
+      ...(config.functions || []),
+      ...intelligentFileTools,
+      ...shellExecutionTools,
+      ...dockerTools
+    ];
+
+    if (allFunctions.length > 0) {
+      const functionExecutor = new FunctionExecutor(allFunctions);
       this.executors.set('function', functionExecutor);
       initPromises.push(functionExecutor.initialize());
     }

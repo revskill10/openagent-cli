@@ -8,6 +8,13 @@ export interface UnifiedToolExecutionContext {
   retries?: number;
 }
 
+export interface ToolResult {
+  toolCall: ToolCall;
+  result?: any;
+  error?: string;
+  executionTime: number;
+}
+
 export interface StreamingToolResult extends ToolResult {
   partial?: any;          // incremental chunk
   done?: boolean;         // true when finished

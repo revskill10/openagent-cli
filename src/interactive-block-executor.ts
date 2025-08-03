@@ -1,6 +1,6 @@
 // interactive-block-executor.ts - Enhanced block executor with interactive user prompts
 import { executeBlocksStreaming, BlockResult } from './block-executor.js';
-import { PromptDefinition } from './simple-tools.js';
+import { PromptDefinition, ToolApprovalPrompt } from './simple-tools.js';
 import { systemEventEmitter } from './system-events.js';
 
 export interface UserInputHandler {
@@ -10,6 +10,13 @@ export interface UserInputHandler {
    * @returns Promise resolving to user's input
    */
   handlePrompt(prompt: PromptDefinition): Promise<any>;
+
+  /**
+   * Handle tool approval prompts
+   * @param approval The tool approval prompt
+   * @returns Promise resolving to user's approval decision
+   */
+  handleToolApproval?(approval: ToolApprovalPrompt): Promise<'approve' | 'reject' | 'modify'>;
 }
 
 export interface InteractiveExecutionOptions {
@@ -22,6 +29,8 @@ export interface InteractiveExecutionOptions {
 export interface InteractiveBlockResult extends BlockResult {
   waitingForInput?: boolean;
   userResponse?: any;
+  waitingForApproval?: boolean;
+  approvalResponse?: 'approve' | 'reject' | 'modify';
 }
 
 /**
@@ -49,35 +58,28 @@ export class InteractiveBlockExecutor {
       const processedScript = await this.preprocessScript(script, variables, options.inputHandler);
       
       // Execute the processed script
-      for await (const result of executeBlocksStreaming(processedScript)) {
-        // Handle prompt results
-        if (result.promptNeeded && options.inputHandler) {
-          yield { ...result, waitingForInput: true };
-          
-          try {
-            const userResponse = await options.inputHandler.handlePrompt(result.promptNeeded);
-            
-            // Validate user input
-            const validatedResponse = this.validateUserInput(result.promptNeeded, userResponse);
-            
-            // Store in variables context
-            variables[result.promptNeeded.variable] = validatedResponse;
-            
-            yield {
-              ...result,
-              done: true,
-              result: validatedResponse,
-              userResponse: validatedResponse,
-              waitingForInput: false
-            };
-          } catch (error) {
-            yield {
-              ...result,
-              done: true,
-              error: `Prompt failed: ${error instanceof Error ? error.message : String(error)}`,
-              waitingForInput: false
-            };
-          }
+      for await (const result of executeBlocksStreaming(processedScript, options.inputHandler)) {
+        // Handle tool approval prompts - don't block, just emit the prompt
+        if (result.toolApprovalNeeded && options.inputHandler?.handleToolApproval) {
+          yield {
+            ...result,
+            waitingForApproval: true,
+            done: false  // Keep execution alive for approval
+          };
+
+          // Don't await here - let the UI handle the approval asynchronously
+          // The execution will continue when the user provides approval
+        }
+        // Handle prompt results - don't block, just emit the prompt
+        else if (result.promptNeeded && options.inputHandler) {
+          yield {
+            ...result,
+            waitingForInput: true,
+            done: false  // Keep execution alive for prompt
+          };
+
+          // Don't await here - let the UI handle the prompt asynchronously
+          // The execution will continue when the user provides input
         } else {
           yield result as InteractiveBlockResult;
         }

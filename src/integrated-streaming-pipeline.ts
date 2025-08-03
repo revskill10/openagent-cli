@@ -6,25 +6,29 @@ import { systemEventEmitter } from './system-events.js';
 
 export interface StreamingPipelineResult {
   id: string;
-  source: 'ai_parser' | 'tool_executor' | 'pipeline' | 'user_input';
-  type: 'ai_content' | 'block_parsed' | 'tool_start' | 'tool_progress' | 'tool_complete' | 'error' | 'prompt_needed';
+  source: 'ai_parser' | 'tool_executor' | 'pipeline' | 'user_input' | 'background_executor';
+  type: 'ai_content' | 'block_parsed' | 'tool_start' | 'tool_progress' | 'tool_complete' | 'error' | 'prompt_needed' | 'execution_queued' | 'status' | 'tool_approval_needed';
   timestamp: number;
-  
+
   // AI parsing results
   aiContent?: string;
   block?: any;
-  
-  // Tool execution results  
+
+  // Tool execution results
   toolName?: string;
   toolResult?: any;
   executionTime?: number;
-  
+
   // Error information
   error?: string;
-  
+
   // User input prompts
   promptDefinition?: any;
-  
+
+  // Background execution status
+  executionState?: any;
+  backgroundJobId?: string;
+
   // Pipeline metadata
   pipelineStats?: {
     activeAIParsing: boolean;
@@ -32,6 +36,7 @@ export interface StreamingPipelineResult {
     queuedToolExecutions: number;
     completedBlocks: number;
     totalExecutionTime: number;
+    backgroundJobs: number;
   };
 }
 
@@ -41,6 +46,7 @@ export interface PipelineOptions {
   enableRealTimeDisplay?: boolean;
   persistExecution?: boolean;
   executionTimeout?: number;
+  requireToolApproval?: boolean;
 }
 
 /**
@@ -154,7 +160,7 @@ export class IntegratedStreamingPipeline {
                   source: 'tool_executor',
                   type: 'tool_complete',
                   timestamp: Date.now(),
-                  toolName: result.tool,
+                  toolName: result.toolCall?.name || 'unknown',
                   toolResult: result.result,
                   executionTime: result.executionTime,
                   pipelineStats: this.getPipelineStats(state)
@@ -165,7 +171,7 @@ export class IntegratedStreamingPipeline {
                   source: 'tool_executor',
                   type: 'tool_progress',
                   timestamp: Date.now(),
-                  toolName: result.tool,
+                  toolName: result.toolCall?.name || 'unknown',
                   toolResult: result.partial,
                   pipelineStats: this.getPipelineStats(state)
                 };
